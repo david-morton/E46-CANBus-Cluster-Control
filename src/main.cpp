@@ -1,11 +1,11 @@
-/* This is a very basic RPM gauge sweep for the E46 gauge cluster.
-Hardware used was a clone Arduino Mega 2560 r3 and Seeed CAN-Bus shield v2
-Program initially based on 'send' from Arduino examples from Seeed CAN-Bus shield library
+/* This is a very basic program to drive the E46 gauge cluster via CAN. The hardware used
+was a Arduino Mega 2560 r3 and Seeed CAN-Bus shield v2. The program initially started life
+as the 'send' example from the Seeed shield library examples.
 
 The scaling ratio of engine RPM to hex value (bytes 2 and 3) of CAN payload is 
-approximated in this program based on a linear formula. 
+approximated in this program based on a linear formula worked out in Excel.
 
-The measured ratios at varios RPM's are as per the below (included for reference):
+For reference the measured ratios at varios RPM's in my own care are as per the below:
 1000 6.65
 2000 6.59
 3000 6.53
@@ -14,6 +14,10 @@ The measured ratios at varios RPM's are as per the below (included for reference
 6000 6.37
 7000 6.31
 */
+
+// TODO
+// Temp gauge warning light
+// Try to sort economy gauge to be something more useful (oil pressure etc)
 
 #include <SPI.h>
 
