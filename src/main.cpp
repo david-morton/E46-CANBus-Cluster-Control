@@ -20,6 +20,7 @@ For reference the measured ratios at varios RPM's in my own care are as per the 
 // Try to sort economy gauge to be something more useful (oil pressure etc)
 
 #include <SPI.h>
+#include <TimedAction.h>
 
 #define CAN_2515
 
@@ -28,6 +29,20 @@ const int CAN_INT_PIN = 2;
 
 #include "mcp2515_can.h"
 mcp2515_can CAN(SPI_CS_PIN); // Set CS pin
+
+// Define varaibles that will be used later
+float rpmHexConversionMultipler = 6.6; // Accurate multiplier at lower RPM in case calculation is too heavy
+int sweepIncrementRpm = 100;
+int sweepStartRpm = 1000;
+int sweepStopRpm = 7000;
+int sweepDelayMs = 50;
+int step;
+int multipliedRpm;
+int currentRpm = sweepStartRpm;
+
+// Define CAN payloads for each use case
+unsigned char stmp[8] = {0, 0, 0, 0, 0, 0, 0, 0};     //RPM
+unsigned char stmp2[8] = {0, 0xAB, 0, 0, 0, 0, 0, 0}; //Temp
 
 void setup() {
     SERIAL_PORT_MONITOR.begin(115200);
@@ -40,18 +55,6 @@ void setup() {
     SERIAL_PORT_MONITOR.println("CAN init ok!");
 }
 
-float rpmHexConversionMultipler = 6.6; // Accurate multiplier at lower RPM in case calculation is too heavy
-int sweepIncrementRpm = 100;
-int sweepStartRpm = 1000;
-int sweepStopRpm = 7000;
-int sweepDelayMs = 50;
-int step;
-int multipliedRpm;
-int currentRpm = sweepStartRpm;
-
-unsigned char stmp[8] = {0, 0, 0, 0, 0, 0, 0, 0};     //RPM
-unsigned char stmp2[8] = {0, 0xAB, 0, 0, 0, 0, 0, 0}; //Temp
-
 void loop() {
     if (currentRpm >= sweepStopRpm) {
         step = -sweepIncrementRpm;
@@ -60,8 +63,6 @@ void loop() {
     }
 
     rpmHexConversionMultipler = (-0.00005540102040816370 * currentRpm) + 6.70061224489796;
-
-    // SERIAL_PORT_MONITOR.println(rpmHexConversionMultipler);
 
     currentRpm = currentRpm + step;
     multipliedRpm = currentRpm * rpmHexConversionMultipler;
