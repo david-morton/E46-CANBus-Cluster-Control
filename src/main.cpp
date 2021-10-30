@@ -31,11 +31,10 @@ const int CAN_INT_PIN = 2;
 mcp2515_can CAN(SPI_CS_PIN); // Set CS pin
 
 // Define varaibles that will be used later
-float rpmHexConversionMultipler = 6.6; // Accurate multiplier at lower RPM in case calculation is too heavy
-int sweepIncrementRpm = 100;
+float rpmHexConversionMultipler = 6.55; // Accurate multiplier at lower RPM in case calculation is too heavy
+int sweepIncrementRpm = 10;
 int sweepStartRpm = 1000;
-int sweepStopRpm = 7000;
-int sweepDelayMs = 50;
+int sweepStopRpm = 4000;
 int step;
 int multipliedRpm;
 int currentRpm = sweepStartRpm;
@@ -44,18 +43,8 @@ int currentRpm = sweepStartRpm;
 unsigned char stmp[8] = {0, 0, 0, 0, 0, 0, 0, 0};     //RPM
 unsigned char stmp2[8] = {0, 0xAB, 0, 0, 0, 0, 0, 0}; //Temp
 
-void setup() {
-    SERIAL_PORT_MONITOR.begin(115200);
-    while(!Serial){};
-
-    while (CAN_OK != CAN.begin(CAN_500KBPS)) {             // init can bus : baudrate = 500k
-        SERIAL_PORT_MONITOR.println("CAN init fail, retry...");
-        delay(250);
-    }
-    SERIAL_PORT_MONITOR.println("CAN init ok!");
-}
-
-void loop() {
+// Function for sending RPM payload
+void canSendRpm(){
     if (currentRpm >= sweepStopRpm) {
         step = -sweepIncrementRpm;
     } else if (currentRpm <= sweepStartRpm) {
@@ -71,6 +60,29 @@ void loop() {
     stmp[3] = (multipliedRpm >> 8);     //MSB
 
     CAN.sendMsgBuf(0x316, 0, 8, stmp);
+}
+
+// Function for sending temp payload
+void canSendTemp(){
     CAN.sendMsgBuf(0x329, 0, 8, stmp2);
-    delay(sweepDelayMs);
+}
+
+// Define our timed actions
+TimedAction rpmThread = TimedAction(40,canSendRpm);
+TimedAction tempThread = TimedAction(40,canSendTemp);
+
+void setup() {
+    SERIAL_PORT_MONITOR.begin(115200);
+    while(!Serial){};
+
+    while (CAN_OK != CAN.begin(CAN_500KBPS)) {             // init can bus : baudrate = 500k
+        SERIAL_PORT_MONITOR.println("CAN init fail, retry...");
+        delay(250);
+    }
+    SERIAL_PORT_MONITOR.println("CAN init ok!");
+}
+
+void loop() {
+    rpmThread.check();
+    tempThread.check();
 }
