@@ -32,44 +32,72 @@ mcp2515_can CAN(SPI_CS_PIN); // Set CS pin
 
 // Define varaibles that will be used later
 float rpmHexConversionMultipler = 6.55; // Accurate multiplier at lower RPM in case calculation is too heavy
-int sweepIncrementRpm = 10;
-int sweepStartRpm = 1000;
-int sweepStopRpm = 4000;
+int sweepIncrementRpm = 25;
+int sweepStartRpm = 500;
+int sweepStopRpm = 6000;
 int step;
 int multipliedRpm;
 int currentRpm = sweepStartRpm;
+int currentTempCelsius;
+int fuelConsumption = 0;
 
 // Define CAN payloads for each use case
-unsigned char stmp[8] = {0, 0, 0, 0, 0, 0, 0, 0};     //RPM
-unsigned char stmp2[8] = {0, 0xAB, 0, 0, 0, 0, 0, 0}; //Temp
+unsigned char canPayloadRpm[8] = {0, 0, 0, 0, 0, 0, 0, 0};     //RPM
+unsigned char canPayloadTemp[8] = {0, 0, 0, 0, 0, 0, 0, 0};    //Temp
+unsigned char canPayloadMisc[8] = {0, 0, 0, 0, 0, 0, 0, 0};    //Misc
 
-// Function for sending RPM payload
-void canSendRpm(){
+// Function for reading RPM value
+void canReadRpm(){
     if (currentRpm >= sweepStopRpm) {
         step = -sweepIncrementRpm;
     } else if (currentRpm <= sweepStartRpm) {
         step = sweepIncrementRpm;
-    }
-
-    rpmHexConversionMultipler = (-0.00005540102040816370 * currentRpm) + 6.70061224489796;
+    } 
 
     currentRpm = currentRpm + step;
     multipliedRpm = currentRpm * rpmHexConversionMultipler;
-        
-    stmp[2] = multipliedRpm;            //LSB
-    stmp[3] = (multipliedRpm >> 8);     //MSB
+}
 
-    CAN.sendMsgBuf(0x316, 0, 8, stmp);
+// Function for sending RPM payload
+void canWriteRpm(){
+    rpmHexConversionMultipler = (-0.00005540102040816370 * currentRpm) + 6.70061224489796;
+
+    canPayloadRpm[2] = multipliedRpm;            //LSB
+    canPayloadRpm[3] = (multipliedRpm >> 8);     //MSB
+
+    CAN.sendMsgBuf(0x316, 0, 8, canPayloadRpm);
+}
+
+// Function for reading temp value
+void canReadTemp(){
+    currentTempCelsius = 0; // Dummy value for development to replace later, 143 seems to be the maximum
 }
 
 // Function for sending temp payload
-void canSendTemp(){
-    CAN.sendMsgBuf(0x329, 0, 8, stmp2);
+void canWriteTemp(){
+    canPayloadTemp[1] = (currentTempCelsius + 48.373) / 0.75;
+    CAN.sendMsgBuf(0x329, 0, 8, canPayloadTemp);
+}
+
+// Function for testing misc functionality
+void canWriteMisc() {
+    canPayloadMisc[0] = 2;                  // 2 for check engine light
+                                            // 16 for EML light
+                                            // 18 for check engine AND EML (add together)
+    canPayloadMisc[2] = fuelConsumption;    // Fuel consumption, rate of change drives value of gauge
+    canPayloadMisc[3] = 8;                  // 8 Over heat light
+
+    fuelConsumption += 10;
+
+    CAN.sendMsgBuf(0x545, 0, 8, canPayloadMisc);
 }
 
 // Define our timed actions
-TimedAction rpmThread = TimedAction(40,canSendRpm);
-TimedAction tempThread = TimedAction(40,canSendTemp);
+TimedAction readRpmThread = TimedAction(40,canReadRpm);
+TimedAction readTempThread = TimedAction(40,canReadTemp);
+TimedAction writeRpmThread = TimedAction(40,canWriteRpm);
+TimedAction writeTempThread = TimedAction(40,canWriteTemp);
+TimedAction writeMiscThread = TimedAction(50,canWriteMisc);
 
 void setup() {
     SERIAL_PORT_MONITOR.begin(115200);
@@ -83,6 +111,9 @@ void setup() {
 }
 
 void loop() {
-    rpmThread.check();
-    tempThread.check();
+    readRpmThread.check();
+    writeRpmThread.check();
+    readTempThread.check();
+    writeTempThread.check();
+    writeMiscThread.check();
 }
