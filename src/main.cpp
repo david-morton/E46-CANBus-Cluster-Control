@@ -1,11 +1,11 @@
 /* This is a very basic program to drive the E46 gauge cluster via CAN. The hardware used
-was a Arduino Mega 2560 r3 and Seeed CAN-Bus shield v2. The program initially started life
-as the 'send' example from the Seeed shield library examples.
+was a Arduino Mega 2560 r3 and Seeed CAN-Bus shield v2.
 
-The scaling ratio of engine RPM to hex value (bytes 2 and 3) of CAN payload is 
+The scaling ratio of engine RPM to hex value of CAN payload is 
 approximated in this program based on a linear formula worked out in Excel.
+This is simply done to give the most accurate dial readout possible.
 
-For reference the measured ratios at varios RPM's in my own care are as per the below:
+For reference the measured ratios at varios RPM's in my own car are as per the below:
 1000 6.65
 2000 6.59
 3000 6.53
@@ -13,11 +13,15 @@ For reference the measured ratios at varios RPM's in my own care are as per the 
 5000 6.42
 6000 6.37
 7000 6.31
-*/
 
-// TODO
-// Temp gauge warning light
-// Try to sort economy gauge to be something more useful (oil pressure etc)
+The fuel economy gauge only works when there is a speed input. Inputting a square wave of
+410Hz and 50% duty cycle gives 60km/h. This signal is put into pin 19 on cluster connector
+X11175 for testing purposes on the bench. This signal is usually provided by the ABS computer.
+
+The lowest speed pulse generation that seems to allow activation of the fuel economy gauge is
+82Hz when increasing and it will stop function at 68Hz when decreasing. 82Hz seems to be about
+5kph.
+*/
 
 #include <SPI.h>
 #include <TimedAction.h>
@@ -31,15 +35,16 @@ const int CAN_INT_PIN = 2;
 mcp2515_can CAN(SPI_CS_PIN); // Set CS pin
 
 // Define varaibles that will be used later
-float rpmHexConversionMultipler = 6.55; // Accurate multiplier at lower RPM in case calculation is too heavy
+float rpmHexConversionMultipler = 6.55; // Default multiplier set to a sensible value for accuracy at lower RPM.
+                                        // This will be overriden via the formula based multiplier later on.
 int sweepIncrementRpm = 25;
-int sweepStartRpm = 500;
-int sweepStopRpm = 6000;
+int sweepStartRpm = 1000;
+int sweepStopRpm = 3000;
 int step;
 int multipliedRpm;
 int currentRpm = sweepStartRpm;
 int currentTempCelsius;
-int fuelConsumption = 0;
+int tempAlarmLight = 110;
 
 // Define CAN payloads for each use case
 unsigned char canPayloadRpm[8] = {0, 0, 0, 0, 0, 0, 0, 0};     //RPM
@@ -70,7 +75,7 @@ void canWriteRpm(){
 
 // Function for reading temp value
 void canReadTemp(){
-    currentTempCelsius = 0; // Dummy value for development to replace later, 143 seems to be the maximum
+    currentTempCelsius = 95; // Static value for development, 143 seems to be the maximum
 }
 
 // Function for sending temp payload
@@ -79,15 +84,28 @@ void canWriteTemp(){
     CAN.sendMsgBuf(0x329, 0, 8, canPayloadTemp);
 }
 
+int consumptionCounter = 0;
+int consumptionIncrease = 40;
+int consumptionValue = 0;
+
 // Function for testing misc functionality
 void canWriteMisc() {
-    canPayloadMisc[0] = 2;                  // 2 for check engine light
-                                            // 16 for EML light
-                                            // 18 for check engine AND EML (add together)
-    canPayloadMisc[2] = fuelConsumption;    // Fuel consumption, rate of change drives value of gauge
-    canPayloadMisc[3] = 8;                  // 8 Over heat light
+    canPayloadMisc[0] = 0;                          // 2 for check engine light
+                                                    // 16 for EML light
+                                                    // 18 for check engine AND EML (add together)
+    canPayloadMisc[1] = consumptionValue;           // Fuel consumption LSB                                        
+    canPayloadMisc[2] = (consumptionValue >> 8);    // Fuel consumption MSB
+    if (currentTempCelsius >= tempAlarmLight)       // Set the red alarm light on the temp gauge if needed
+        canPayloadMisc[3] = 8;
+    else
+        canPayloadMisc[3] = 0;
 
-    fuelConsumption += 10;
+    if (consumptionCounter % 1 == 0) {
+        consumptionValue += consumptionIncrease;
+        // Serial.println(consumptionValue);
+    }
+
+    consumptionCounter++;
 
     CAN.sendMsgBuf(0x545, 0, 8, canPayloadMisc);
 }
@@ -95,9 +113,9 @@ void canWriteMisc() {
 // Define our timed actions
 TimedAction readRpmThread = TimedAction(40,canReadRpm);
 TimedAction readTempThread = TimedAction(40,canReadTemp);
-TimedAction writeRpmThread = TimedAction(40,canWriteRpm);
-TimedAction writeTempThread = TimedAction(40,canWriteTemp);
-TimedAction writeMiscThread = TimedAction(50,canWriteMisc);
+TimedAction writeRpmThread = TimedAction(10,canWriteRpm);
+TimedAction writeTempThread = TimedAction(10,canWriteTemp);
+TimedAction writeMiscThread = TimedAction(10,canWriteMisc);
 
 void setup() {
     SERIAL_PORT_MONITOR.begin(115200);
