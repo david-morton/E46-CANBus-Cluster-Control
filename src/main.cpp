@@ -28,11 +28,13 @@ The lowest speed pulse generation that seems to allow activation of the fuel eco
 
 #define CAN_2515
 
-const int SPI_CS_PIN = 9;
+const int SPI_SS_PIN_BMW = 9;
+const int SPI_SS_PIN_NISSAN = 10;
 const int CAN_INT_PIN = 2;
 
 #include "mcp2515_can.h"
-mcp2515_can CAN(SPI_CS_PIN); // Set CS pin
+mcp2515_can CAN_BMW(SPI_SS_PIN_BMW);       // Set SS pin for shield 1 - BMW (instrument cluster)
+mcp2515_can CAN_NISSAN(SPI_SS_PIN_NISSAN); // Set SS pin for shield 2 - Nissan (engine)
 
 // Define varaibles that will be used later
 float rpmHexConversionMultipler = 6.55; // Default multiplier set to a sensible value for accuracy at lower RPM.
@@ -70,7 +72,7 @@ void canWriteRpm(){
     canPayloadRpm[2] = multipliedRpm;            //LSB
     canPayloadRpm[3] = (multipliedRpm >> 8);     //MSB
 
-    CAN.sendMsgBuf(0x316, 0, 8, canPayloadRpm);
+    CAN_BMW.sendMsgBuf(0x316, 0, 8, canPayloadRpm);
 }
 
 // Function for reading temp value
@@ -81,7 +83,7 @@ void canReadTemp(){
 // Function for sending temp payload
 void canWriteTemp(){
     canPayloadTemp[1] = (currentTempCelsius + 48.373) / 0.75;
-    CAN.sendMsgBuf(0x329, 0, 8, canPayloadTemp);
+    CAN_BMW.sendMsgBuf(0x329, 0, 8, canPayloadTemp);
 }
 
 int consumptionCounter = 0;
@@ -107,7 +109,7 @@ void canWriteMisc() {
 
     consumptionCounter++;
 
-    CAN.sendMsgBuf(0x545, 0, 8, canPayloadMisc);
+    CAN_BMW.sendMsgBuf(0x545, 0, 8, canPayloadMisc);
 }
 
 // Define our timed actions
@@ -121,11 +123,17 @@ void setup() {
     SERIAL_PORT_MONITOR.begin(115200);
     while(!Serial){};
 
-    while (CAN_OK != CAN.begin(CAN_500KBPS)) {             // init can bus : baudrate = 500k
-        SERIAL_PORT_MONITOR.println("CAN init fail, retry...");
+    while (CAN_OK != CAN_BMW.begin(CAN_500KBPS)) {             // init can bus : baudrate = 500k
+        SERIAL_PORT_MONITOR.println("BMW CAN init fail, retry...");
         delay(250);
     }
-    SERIAL_PORT_MONITOR.println("CAN init ok!");
+    SERIAL_PORT_MONITOR.println("BMW CAN init ok!");
+
+    while (CAN_OK != CAN_NISSAN.begin(CAN_500KBPS)) {             // init can bus : baudrate = 500k ??
+        SERIAL_PORT_MONITOR.println("Nissan CAN init fail, retry...");
+        delay(250);
+    }
+    SERIAL_PORT_MONITOR.println("Nissan CAN init ok!");
 }
 
 void loop() {
