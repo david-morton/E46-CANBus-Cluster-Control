@@ -1,5 +1,5 @@
-/* This is a very basic program to drive the E46 gauge cluster via CAN. The hardware used
-was a Arduino Mega 2560 r3 and Seeed CAN-Bus shield v2.
+/* This is a basic program to drive the E46 gauge cluster via CAN. The hardware used
+was a Arduino Mega 2560 r3 and two Seeed CAN-Bus shield v2's.
 
 The scaling ratio of engine RPM to hex value of CAN payload is 
 approximated in this program based on a linear formula worked out in Excel.
@@ -25,47 +25,52 @@ The lowest speed pulse generation that seems to allow activation of the fuel eco
 
 #include <SPI.h>
 #include <TimedAction.h>
+#include <mcp2515_can.h>
+#include <avr/sleep.h>
 
 #define CAN_2515
 
-const int SPI_SS_PIN_BMW = 9;
-const int SPI_SS_PIN_NISSAN = 10;
+const int SPI_SS_PIN_BMW = 9;              // Slave select pin for CAN shield
+const int SPI_SS_PIN_NISSAN = 10;          // Slave select pin for CAN shield
 const int CAN_INT_PIN = 2;
+const byte interruptPowerSavePin = 2;     // External interrupt for power saving trigger
+const int oilPressureLightPin = 22;
+const int chargingLightPin = 23;
 
-#include "mcp2515_can.h"
+
 mcp2515_can CAN_BMW(SPI_SS_PIN_BMW);       // Set SS pin for shield 1 - BMW (instrument cluster)
 mcp2515_can CAN_NISSAN(SPI_SS_PIN_NISSAN); // Set SS pin for shield 2 - Nissan (engine)
 
 // Define varaibles that will be used later
-float rpmHexConversionMultipler = 6.55; // Default multiplier set to a sensible value for accuracy at lower RPM.
-                                        // This will be overriden via the formula based multiplier later on.
-int sweepIncrementRpm = 25;
-int sweepStartRpm = 1000;
-int sweepStopRpm = 3000;
+float rpmHexConversionMultipler = 6.55;    // Default multiplier set to a sensible value for accuracy at lower RPM.
+                                           // This will be overriden via the formula based multiplier later on if used.
+const int sweepIncrementRpm = 25;
+const int sweepStartRpm = 1000;
+const int sweepStopRpm = 3000;
+const int tempAlarmLight = 110;
+
 int step;
 int multipliedRpm;
 int currentRpm = sweepStartRpm;
 int currentTempCelsius;
-int tempAlarmLight = 110;
 
 // Define CAN payloads for each use case
 unsigned char canPayloadRpm[8] = {0, 0, 0, 0, 0, 0, 0, 0};     //RPM
 unsigned char canPayloadTemp[8] = {0, 0, 0, 0, 0, 0, 0, 0};    //Temp
-unsigned char canPayloadMisc[8] = {0, 0, 0, 0, 0, 0, 0, 0};    //Misc
+unsigned char canPayloadMisc[8] = {0, 0, 0, 0, 0, 0, 0, 0};    //Misc (check light, consumption and temp alarm light)
 
-// Function for reading RPM value
+// Function - Read RPM value from Nissan CAN
 void canReadRpm(){
-    if (currentRpm >= sweepStopRpm) {
+    if (currentRpm >= sweepStopRpm)
         step = -sweepIncrementRpm;
-    } else if (currentRpm <= sweepStartRpm) {
+    else if (currentRpm <= sweepStartRpm)
         step = sweepIncrementRpm;
-    } 
 
     currentRpm = currentRpm + step;
     multipliedRpm = currentRpm * rpmHexConversionMultipler;
 }
 
-// Function for sending RPM payload
+// Function - Write RPM value to BMW CAN
 void canWriteRpm(){
     rpmHexConversionMultipler = (-0.00005540102040816370 * currentRpm) + 6.70061224489796;
 
@@ -75,12 +80,12 @@ void canWriteRpm(){
     CAN_BMW.sendMsgBuf(0x316, 0, 8, canPayloadRpm);
 }
 
-// Function for reading temp value
+// Function - Read temp value from Nissan CAN
 void canReadTemp(){
-    currentTempCelsius = 95; // Static value for development, 143 seems to be the maximum
+    currentTempCelsius = 95;
 }
 
-// Function for sending temp payload
+// Function - Write temp value to BMW CAN
 void canWriteTemp(){
     canPayloadTemp[1] = (currentTempCelsius + 48.373) / 0.75;
     CAN_BMW.sendMsgBuf(0x329, 0, 8, canPayloadTemp);
@@ -90,7 +95,7 @@ int consumptionCounter = 0;
 int consumptionIncrease = 40;
 int consumptionValue = 0;
 
-// Function for testing misc functionality
+// Function - Write misc payload to BMW CAN
 void canWriteMisc() {
     canPayloadMisc[0] = 0;                          // 2 for check engine light
                                                     // 16 for EML light
@@ -104,7 +109,6 @@ void canWriteMisc() {
 
     if (consumptionCounter % 1 == 0) {
         consumptionValue += consumptionIncrease;
-        // Serial.println(consumptionValue);
     }
 
     consumptionCounter++;
@@ -119,23 +123,58 @@ TimedAction writeRpmThread = TimedAction(10,canWriteRpm);
 TimedAction writeTempThread = TimedAction(10,canWriteTemp);
 TimedAction writeMiscThread = TimedAction(10,canWriteMisc);
 
+byte old_ADCSRA = ADCSRA;
+
+// Interrupt Service Routine (ISR) - Power saving sleep and wake
+void changePowerState () {
+    if (digitalRead(interruptPowerSavePin) == LOW){         // Go to sleep
+        SERIAL_PORT_MONITOR.println("I'm going to sleep");
+        ADCSRA = 0;
+        set_sleep_mode (SLEEP_MODE_PWR_DOWN); 
+        sleep_enable();
+        noInterrupts ();
+    }
+    else if (digitalRead(interruptPowerSavePin) == HIGH){    // Wake up
+        SERIAL_PORT_MONITOR.println("I'm waking up");
+        sleep_disable();
+        detachInterrupt (digitalPinToInterrupt(interruptPowerSavePin));
+        ADCSRA = old_ADCSRA ;
+        attachInterrupt(digitalPinToInterrupt(interruptPowerSavePin), changePowerState, CHANGE);
+    }
+}
+
+// Our main setup stanza
 void setup() {
     SERIAL_PORT_MONITOR.begin(115200);
     while(!Serial){};
 
+    // Configure pins to drive dash lights
+    pinMode(chargingLightPin, OUTPUT);
+    pinMode(oilPressureLightPin, OUTPUT);
+
+    digitalWrite(chargingLightPin, LOW);
+    digitalWrite(oilPressureLightPin, LOW);
+
+    // Configure input pins for power saving
+    pinMode(interruptPowerSavePin, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(interruptPowerSavePin), changePowerState, CHANGE);
+    // digitalWrite(interruptPowerSavePin, HIGH);
+
+    // Configure CAN interfaces
     while (CAN_OK != CAN_BMW.begin(CAN_500KBPS)) {             // init can bus : baudrate = 500k
         SERIAL_PORT_MONITOR.println("BMW CAN init fail, retry...");
         delay(250);
     }
     SERIAL_PORT_MONITOR.println("BMW CAN init ok!");
 
-    while (CAN_OK != CAN_NISSAN.begin(CAN_500KBPS)) {             // init can bus : baudrate = 500k ??
+    while (CAN_OK != CAN_NISSAN.begin(CAN_500KBPS)) {          // init can bus : baudrate = 500k ??
         SERIAL_PORT_MONITOR.println("Nissan CAN init fail, retry...");
         delay(250);
     }
     SERIAL_PORT_MONITOR.println("Nissan CAN init ok!");
 }
 
+// Our main loop
 void loop() {
     readRpmThread.check();
     writeRpmThread.check();
