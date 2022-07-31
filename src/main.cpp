@@ -1,11 +1,17 @@
 /* This is a basic program to drive the E46 gauge cluster via CAN. The hardware used
-was a Arduino Mega 2560 r3 and two Seeed CAN-Bus shield v2's.
+was a single Arduino Mega 2560 r3 and two Seeed CAN-Bus shield v2's.
 
-The scaling ratio of engine RPM to hex value of CAN payload is 
+This project was used in the context of an engine swap where a Nissan VQ37VHR was
+installed into the E46, and the desire was to maintain a functional OEM dashboard.
+
+The scaling ratio of engine RPM to the hex value of CAN payload is 
 approximated in this program based on a linear formula worked out in Excel.
-This is simply done to give the most accurate dial readout possible.
+This was done from a test cluster so that visually the needle lined up
+as well as possible throughout the RPM range. Individual clusters may vary
+so some experimentation with this may be desired ... practically speaking it
+may make no differance at all :)
 
-For reference the measured ratios at varios RPM's in my own car are as per the below:
+For reference the measured ratios at varios RPM's in my own test cluster are as per the below:
 1000 6.65
 2000 6.59
 3000 6.53
@@ -26,20 +32,15 @@ The lowest speed pulse generation that seems to allow activation of the fuel eco
 #include <SPI.h>
 #include <TimedAction.h>
 #include <mcp2515_can.h>
-#include <avr/sleep.h>
 
 #define CAN_2515
 
-const int SPI_SS_PIN_BMW = 9;              // Slave select pin for CAN shield
-const int SPI_SS_PIN_NISSAN = 10;          // Slave select pin for CAN shield
+const int SPI_SS_PIN_BMW = 9;              // Slave select pin for CAN shield 1 (BMW CAN bus)
+const int SPI_SS_PIN_NISSAN = 10;          // Slave select pin for CAN shield 2 (Nissan CAN bus)
 const int CAN_INT_PIN = 2;
-const byte interruptPowerSavePin = 2;     // External interrupt for power saving trigger
-const int oilPressureLightPin = 22;
-const int chargingLightPin = 23;
 
-
-mcp2515_can CAN_BMW(SPI_SS_PIN_BMW);       // Set SS pin for shield 1 - BMW (instrument cluster)
-mcp2515_can CAN_NISSAN(SPI_SS_PIN_NISSAN); // Set SS pin for shield 2 - Nissan (engine)
+mcp2515_can CAN_BMW(SPI_SS_PIN_BMW);
+mcp2515_can CAN_NISSAN(SPI_SS_PIN_NISSAN);
 
 // Define varaibles that will be used later
 float rpmHexConversionMultipler = 6.55;    // Default multiplier set to a sensible value for accuracy at lower RPM.
@@ -123,42 +124,10 @@ TimedAction writeRpmThread = TimedAction(10,canWriteRpm);
 TimedAction writeTempThread = TimedAction(10,canWriteTemp);
 TimedAction writeMiscThread = TimedAction(10,canWriteMisc);
 
-byte old_ADCSRA = ADCSRA;
-
-// Interrupt Service Routine (ISR) - Power saving sleep and wake
-void changePowerState () {
-    if (digitalRead(interruptPowerSavePin) == LOW){         // Go to sleep
-        SERIAL_PORT_MONITOR.println("I'm going to sleep");
-        ADCSRA = 0;
-        set_sleep_mode (SLEEP_MODE_PWR_DOWN); 
-        sleep_enable();
-        noInterrupts ();
-    }
-    else if (digitalRead(interruptPowerSavePin) == HIGH){    // Wake up
-        SERIAL_PORT_MONITOR.println("I'm waking up");
-        sleep_disable();
-        detachInterrupt (digitalPinToInterrupt(interruptPowerSavePin));
-        ADCSRA = old_ADCSRA ;
-        attachInterrupt(digitalPinToInterrupt(interruptPowerSavePin), changePowerState, CHANGE);
-    }
-}
-
 // Our main setup stanza
 void setup() {
     SERIAL_PORT_MONITOR.begin(115200);
     while(!Serial){};
-
-    // Configure pins to drive dash lights
-    pinMode(chargingLightPin, OUTPUT);
-    pinMode(oilPressureLightPin, OUTPUT);
-
-    digitalWrite(chargingLightPin, LOW);
-    digitalWrite(oilPressureLightPin, LOW);
-
-    // Configure input pins for power saving
-    pinMode(interruptPowerSavePin, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(interruptPowerSavePin), changePowerState, CHANGE);
-    // digitalWrite(interruptPowerSavePin, HIGH);
 
     // Configure CAN interfaces
     while (CAN_OK != CAN_BMW.begin(CAN_500KBPS)) {             // init can bus : baudrate = 500k
